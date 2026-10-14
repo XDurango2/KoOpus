@@ -5,13 +5,25 @@
 #include <opus.h>
 #include <android/log.h>
 
-// Helper: fetch private long field "nativeHandle" from Kotlin OpusEncoder
-static opus_encoder* get_enc(JNIEnv* env, jobject thiz) {
-    jclass cls = env->GetObjectClass(thiz);
-    jfieldID fid = env->GetFieldID(cls, "nativeHandle", "J");
-    if (!fid) return nullptr;
-    jlong h = env->GetLongField(thiz, fid);
-    return reinterpret_cast<opus_encoder*>((intptr_t)h);
+// Helper: OpusTuning.encoder -> OpusEncoder (Kotlin object) -> long "nativeHandle".
+// En un `object` de Kotlin, las propiedades son campos estáticos; se prueba también como instancia.
+static OpusEncoder* get_enc(JNIEnv* env, jobject thiz) {
+    jclass tcls = env->GetObjectClass(thiz);
+    jfieldID efid = env->GetFieldID(tcls, "encoder", "Ljava/lang/Object;");
+    if (!efid) { env->ExceptionClear(); return nullptr; }
+    jobject encoder = env->GetObjectField(thiz, efid);
+    if (!encoder) return nullptr;
+    jclass ecls = env->GetObjectClass(encoder);
+    jlong h = 0;
+    if (jfieldID sfid = env->GetStaticFieldID(ecls, "nativeHandle", "J")) {
+        h = env->GetStaticLongField(ecls, sfid);
+    } else {
+        env->ExceptionClear();
+        jfieldID ifid = env->GetFieldID(ecls, "nativeHandle", "J");
+        if (!ifid) { env->ExceptionClear(); return nullptr; }
+        h = env->GetLongField(encoder, ifid);
+    }
+    return reinterpret_cast<OpusEncoder*>((intptr_t)h);
 }
 
 static void throwISE(JNIEnv* env, const char* msg) {

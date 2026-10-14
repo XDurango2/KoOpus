@@ -12,6 +12,9 @@ set(OPUS_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/../opus/include")
 # Create our native libkoopus.so
 add_library(koopus SHARED
         src/main/cpp/opus_wrapper.cpp
+        src/main/cpp/opus_tuning_jni.cpp
+        src/main/cpp/opus_repacketizer_jni.cpp
+        src/main/cpp/opus_decode_agg_jni.cpp
 )
 
 # Declare prebuilt Opus static library

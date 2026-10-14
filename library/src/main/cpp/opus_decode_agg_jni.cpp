@@ -3,13 +3,19 @@
 #include <opus.h>
 #include <android/log.h>
 
-// Helper: fetch private long field "nativeHandle" from Kotlin OpusDecoder
-static opus_decoder* get_dec(JNIEnv* env, jobject thiz) {
+// Helper: "nativeHandle" de OpusDecoder (object de Kotlin => campo estático; se prueba también como instancia).
+static OpusDecoder* get_dec(JNIEnv* env, jobject thiz) {
     jclass cls = env->GetObjectClass(thiz);
-    jfieldID fid = env->GetFieldID(cls, "nativeHandle", "J");
-    if (!fid) return nullptr;
-    jlong h = env->GetLongField(thiz, fid);
-    return reinterpret_cast<opus_decoder*>((intptr_t)h);
+    jlong h = 0;
+    if (jfieldID sfid = env->GetStaticFieldID(cls, "nativeHandle", "J")) {
+        h = env->GetStaticLongField(cls, sfid);
+    } else {
+        env->ExceptionClear();
+        jfieldID fid = env->GetFieldID(cls, "nativeHandle", "J");
+        if (!fid) { env->ExceptionClear(); return nullptr; }
+        h = env->GetLongField(thiz, fid);
+    }
+    return reinterpret_cast<OpusDecoder*>((intptr_t)h);
 }
 
 static void throwISE(JNIEnv* env, const char* msg) {
@@ -32,30 +38,17 @@ Java_com_steegler_koopus_OpusDecoder_decodeAggregated(JNIEnv* env, jobject thiz,
                         if (pcm) env->ReleasePrimitiveArrayCritical(outPcm, pcm, 0);
                         throwISE(env, "OOM"); return -1; }
 
+    // opus_decode entiende paquetes con varios frames (p. ej. 2x20ms del repacketizer) y necesita
+    // el paquete completo con TOC; el buffer de salida debe cubrir la duración total del paquete.
     const unsigned char* data = (const unsigned char*)pay;
-    int toc = 0, frames = 0;
-    const unsigned char* fptrs[48]; // upper bound across modes
-    opus_int16 sizes[48];
-
-    // Parse packet into individual frames
-    int rc = opus_packet_parse(data, length, &toc, fptrs, sizes, &frames);
-    if (rc < 0) { env->ReleasePrimitiveArrayCritical(outPcm, pcm, 0);
-                  env->ReleasePrimitiveArrayCritical(payload, pay, 0);
-                  throwISE(env, "opus_packet_parse failed");
-                  return -1; }
-
-    int samplesTotal = 0;
-    for (int i = 0; i < frames; ++i) {
-        int decSamples = opus_decode(dec, fptrs[i], sizes[i], pcm + samplesTotal, maxFrameSize, 0);
-        if (decSamples < 0) { env->ReleasePrimitiveArrayCritical(outPcm, pcm, 0);
-                              env->ReleasePrimitiveArrayCritical(payload, pay, 0);
-                              throwISE(env, "opus_decode failed"); return -1; }
-        samplesTotal += decSamples;
-    }
+    (void)maxFrameSize;
+    int capacity = (int)env->GetArrayLength(outPcm);
+    int samples = opus_decode(dec, data, length, pcm, capacity, 0);
 
     env->ReleasePrimitiveArrayCritical(outPcm, pcm, 0);
     env->ReleasePrimitiveArrayCritical(payload, pay, 0);
-    return samplesTotal;
+    if (samples < 0) { throwISE(env, opus_strerror(samples)); return -1; }
+    return samples;
 }
 
 JNIEXPORT void JNICALL
